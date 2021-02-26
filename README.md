@@ -27,7 +27,11 @@ reached.
 This script will copy (update)  the check_lightning file to all RPi computers which
 participate in the lightning detection system. The master program is kept
 and edited on a computer named rp5 and updates distributed from there.
-.
+
+## check.log:
+
+This file contains date and time and status information of lightning events reaching the 
+100% threshold.  Each computer records its' own data. This file is from rp5.
 
 
    
