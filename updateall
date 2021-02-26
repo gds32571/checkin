@@ -1,0 +1,7 @@
+#!/bin/bash
+
+scp ./check_lightning pi@rp6:/home/pi/checkin/check_lightning
+scp ./check_lightning pi@zero4:/home/pi/checkin/check_lightning
+scp ./check_lightning pi@rp1:/home/pi/checkin/check_lightning
+scp ./check_lightning pi@rp7:/home/pi/checkin/check_lightning
+scp ./check_lightning pi@rp2:/home/pi/checkin/check_lightning

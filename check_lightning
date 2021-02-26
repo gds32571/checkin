@@ -1,0 +1,261 @@
+#!/usr/bin/python
+
+# 28 May 2019 - gswann
+# connects to lightning manager to get pertinent lightning data
+# may make decision to shutdown this system
+
+#from time import sleep
+
+# version 1.1 - 12 Jun 2019 - gswann
+# will shutdown itself when LD says 100%
+
+# version 1.2 - 13 Jul 2019 - gswann
+# prints myURL into logfile
+
+# version 1.3 14 Jul 2019 - gswann
+# accesses ups at startup for testing
+
+# version 1.4 15 jul 2019 - gswann
+# use MQTT publish to xmit return code to HA server
+# adding try block around curl
+
+# version 1.5 5 Aug 2019 - gswann
+# added error detection on socket receive
+# increased the timeout from 5 to 15 on receive.
+# added deadman
+
+# 24 June 2020
+# now using on rp7 (old kitchen)
+# and rp1 (old rp1 in study in Pace) 
+# no lightning hardware, but want to use the deadman
+# skip checkUPS if ups host = otaX
+
+# 22 Feb 2021
+# added host rp2 (old ha32571) and ota8
+
+# 26 Feb 2021
+# version 1.7
+# Zero4 - UPS was replaced with microUPS and sonoff switch
+# So, for those computers with NO UPS but with 
+# microUPS and Sonoff switch,
+# added mqtt message to turn off Sonoff power switch
+
+from __future__ import print_function
+import time
+from datetime import datetime
+import socket
+from subprocess import check_call
+import paho.mqtt.publish as publish
+
+version = "1.7"
+
+# which mode do we use?
+# 0 = real port, real cmd
+# 1 = test port, real cmd
+# 2 = test port, test cmd 
+
+testmode = 0
+
+if testmode > 0:
+   print("starting test port mode...")
+   testport = 1
+else:
+   testport = 0
+    
+if testmode == 2:
+    print("starting test cmd mode...")
+    upsCmd = 'pause'
+else:
+    print("starting real cmd mode...")
+    upsCmd = 'stop'
+
+
+myHost = socket.gethostname()
+
+#import pdb
+#pdb.set_trace()
+
+# create map from hostname to supporting UPS or Sonoff switch
+map = {'rp7':['otaX',3024,' '],
+       'rp1':['otaX',3023,' '],
+       'rp6':['ota7',3022,' '],
+       'rp5':['ota5',3021,' '],
+       'rp2':['ota8',3025,' '],
+       'zero4':['otaX',3020,'switchA']}
+#       'zero4':['ota6',3020]}
+upsHost = (map[myHost][0])
+myPort  = (map[myHost][1])
+mySwitch = (map[myHost][2])
+
+myURL = 'http://ups-control-' + upsHost + './' + upsCmd
+myURLtest = 'http://ups-control-' + upsHost + './'
+
+retcode = 99
+print("Version " + version)
+print('running on host ' + myHost + ' supported by ' + upsHost)
+print('with command URL ' + myURL)
+if (len(mySwitch)>2):
+   print("using Sonoff switch " + mySwitch)
+# print(myURL)
+
+print('')
+strikes = 0
+oldStrikes = 0
+prob = -1
+oldProb = -1
+mySleep = 2
+myTimeoutCnt = 0
+
+#*****************************************
+def checkUPS():
+   global myURLtest, retcode, upsHost
+   if (upsHost == 'otaX'):
+      print("No UPS on host\n")
+      if (len(mySwitch)>2):
+         print("using Sonoff switch " + mySwitch)
+      return
+   print("\n*********************")
+   try:
+      retcode = check_call(['/usr/bin/curl', myURLtest])
+   except:
+      print("Couldn't check UPS")
+   try:   
+      publish.single(myHost + "/retcode",retcode, hostname = "ha32163", auth={'username':"hass", 'password':"hass"})
+   except:
+      print("Couldn't publish retcode")
+   print("*********************\n")
+
+
+#*****************************************
+def deadman(port):
+    global myTimeoutCnt
+    # create a socket object
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    host = 'ha32163'
+
+    try:
+       s.connect((host, port))
+       s.settimeout(10.0)
+
+       # Receive no more than 1024 bytes
+       s.sendall(b'mysend')
+       msg = s.recv(1024)
+       s.close()
+       print ("Watchdog " + msg.decode('ascii') + ' - ' + str(myTimeoutCnt) + ' errors')
+       #print (msg.decode('ascii'))
+    except:
+          myTimeoutCnt += 1
+          print('couldnt connect to watchdog')
+#          time.sleep(10)
+#          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+#*****************************************
+def checkin():
+    global mySleep,oldStrikes,strikes,delta,samecnt,oldProb,prob
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    host = 'zero5'
+    if testport == 0:
+       port = 4700
+    else:
+       port = 4701
+    s.settimeout(15.0)
+
+    try:
+       s.connect((host, port))
+    except:
+          print('couldnt connect')
+          prob = -1
+#          time.sleep(10)
+#          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+       # Receive no more than 1024 bytes
+
+    else:    
+       s.sendall(b'status')
+       try:
+          msg = s.recv(1024)
+       except:
+          print("Receive failed")
+          prob = -1
+          return
+       s.close()
+       hdr,strikes,delta,samecnt,prob = msg.split(" ")
+       strikes = int(strikes)
+       delta = int(delta)
+       prob = int(prob)
+       print (hdr,strikes,delta,samecnt,prob, end=' - ') 
+
+       if (strikes != oldStrikes) or (prob != oldProb):
+          mySleep = 2
+          oldStrikes = strikes
+          oldProb = prob
+       else:
+          mySleep += 4
+          if mySleep > 30:
+            mySleep = 30
+
+#       print strikes
+#       print (msg.decode('ascii'))
+
+# if the very first prob is 100, wait until it isn't
+# we don't want to reboot after an hour and immediately shutdown again.
+# I think...
+
+# prob = 100
+
+print("Checking for good startup value")
+while (prob == 100 or prob == -1):
+#   checkUPS()
+   checkin()
+
+   if (prob == 100 or prob == -1):
+      print("Waiting for good startup value")
+      time.sleep(30)
+
+print("OK to start up")
+publish.single(myHost + "/retcode",retcode, hostname = "ha32163", auth={'username':"hass", 'password':"hass"})
+
+myTime = time.time() + 120
+
+while 1:
+        if myTime < time.time():
+           deadman(myPort)
+           checkUPS()
+           myTime = time.time() + 120
+
+	checkin()
+	
+	if prob == 0:
+	   print ("not much chance (0) of a storm")
+	elif prob == 5:
+	   print ("Minimal (5) storm detected")
+	elif prob == 20:
+	   print ("Minimal (20) storm detected")
+	elif prob == 30:
+	   print ("Storm (30) detected")
+        elif prob == 60:
+           print ("Storm approaching")
+        elif prob == 90:
+           print ("Storm close by!")
+        elif prob == 95:
+           print ("Storm right here!")
+        elif prob == 100:
+           print ("Storm is on top - shutdown!")
+	   outf = open("check.log","a")
+	   outf.write(time.strftime(" %Y/%m/%d"))
+	   outf.write(time.strftime(" %H:%M:%S"))
+	   outf.write("  -  Storm is on top - shutdown!\n")
+#	   outf.write(myURL)
+#	   outf.write("\n")
+	   outf.flush()
+	   outf.close()
+	   if (upsHost == 'otaX' and len(mySwitch) > 2):
+	      print("Turning off power switch")
+	      publish.single("ha/" + mySwitch,"off", hostname = "ha32163", auth={'username':"hass", 'password':"hass"})
+	   else:
+	      check_call(['/usr/bin/curl', myURL])
+	   # if we are shutting down, wait a few minutes
+	   # do not resend the shutdown command
+
+	   print("Sleeping for 5 minutes if in test mode")
+	   time.sleep(300)
+	time.sleep(mySleep)
