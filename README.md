@@ -33,7 +33,9 @@ and edited on a computer named rp5 and updates distributed from there.
 This file contains date and time and status information of lightning events reaching the 
 100% threshold.  Each computer records its' own data. This file is from rp5.
 
-You would do well to read my blog post on this system at: https://gswann.blogspot.com/2019/07/lighting-detection-and-surge-mitigation.html
+## Blog:
+You would do well to read my blog post on this system at:
+https://gswann.blogspot.com/2019/07/lighting-detection-and-surge-mitigation.html
 
    
 
